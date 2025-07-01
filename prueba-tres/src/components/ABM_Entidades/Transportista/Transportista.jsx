@@ -1,105 +1,194 @@
-import React, { useState } from 'react';
-import { Search, Edit, Trash2, Phone, Mail, MapPin } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Search, Edit, Trash2, Phone, DollarSign, Truck, MapPin, Eye } from 'lucide-react';
+import { createTransportista, deleteTransportista, getTransportista, updateTransportista } from '../../../services/transportista.service';
+import { getVehiculos } from '../../../services/tipoVehiculo.service';
+import { getZonas } from '../../../services/zona.service';
+import Swal from 'sweetalert2';
+
 
 const Transportistas = ({ showNotification, tabColor }) => {
   const [data, setData] = useState([]);
   const [editingId, setEditingId] = useState(null);
+  const [tiposVehiculo, setTiposVehiculo] = useState([]);
+  const [zonasViaje, setZonasViaje] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedTransportista, setSelectedTransportista] = useState(null);
+  const [showModal, setShowModal] = useState(false);
+  
+  // Modificado: Se quita costoServicio del estado del formulario
   const [form, setForm] = useState({
     nombre: '',
     contacto: '',
     telefono: '',
-    email: '',
-    direccion: ''
+    tipoVehiculos: [],
+    zonasDeViaje: []
   });
+  
+  useEffect(() => {
+    const fetchAll = async () => {
+      try {
+        const [transportistasData, tiposVehiculoData, zonasViajeData] = await Promise.all([
+          getTransportista(),
+          getVehiculos(),
+          getZonas()
+        ]);
+        setData(transportistasData);
+        setTiposVehiculo(tiposVehiculoData);
+        setZonasViaje(zonasViajeData);
+      } catch (error) {
+        showNotification('Error al cargar datos', 'error');
+      }
+    };
+    fetchAll();
+  }, []);
 
-  const generateId = () => {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
-  };
 
   const clearForm = () => {
+    // Modificado: Se quita costoServicio al limpiar el formulario
     setForm({
       nombre: '',
       contacto: '',
       telefono: '',
-      email: '',
-      direccion: ''
+      tipoVehiculos: [], // Corregido: Debe ser un array vacío para el select multiple
+      zonasDeViaje: []  // Corregido: Debe ser un array vacío para el select multiple
     });
     setEditingId(null);
   };
 
+
   const handleInputChange = (e) => {
-    const { name, value } = e.target;
-    setForm({ ...form, [name]: value });
+    const { name, value, options, type } = e.target;
+    if (type === 'select-multiple') {
+      const selectedValues = Array.from(options)
+        .filter(option => option.selected)
+        .map(option => option.value);
+      setForm(prev => ({ ...prev, [name]: selectedValues }));
+    } else {
+      setForm(prev => ({ ...prev, [name]: value }));
+    }
   };
 
+
+  const viewEntity = (transportista) => {
+    setSelectedTransportista(transportista);
+    setShowModal(true);
+  };
+
+  // Modificado: Se quita la validación de costoServicio
   const validateForm = () => {
-    return form.nombre && form.contacto && form.telefono;
+    return form.nombre && form.contacto && form.telefono && form.tipoVehiculos.length > 0 && form.zonasDeViaje.length > 0 
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!validateForm()) {
       showNotification('Por favor completa todos los campos requeridos', 'error');
       return;
     }
-
+    
+    // Modificado: Se quita costoServicio de los datos a enviar
     const entityData = {
-      id: editingId || generateId(),
-      ...form,
-      fechaCreacion: editingId ?
-        data.find(item => item.id === editingId).fechaCreacion :
-        new Date().toISOString()
+      nombre: form.nombre,
+      contacto: form.contacto,
+      telefono: form.telefono,
+      tipoVehiculos: form.tipoVehiculos.map(id => parseInt(id)),  
+      zonasDeViaje: form.zonasDeViaje.map(id => parseInt(id)), 
     };
 
-    if (editingId) {
-      setData(data.map(item => item.id === editingId ? entityData : item));
-      showNotification('Transportista actualizado correctamente');
-    } else {
-      setData([...data, entityData]);
-      showNotification('Transportista agregado correctamente');
+    try {
+      if (editingId) {
+        const updated = await updateTransportista(editingId, entityData);
+        setData(data.map(item => (item.id === editingId ? updated : item)));
+        showNotification('Transportista actualizado correctamente');
+      } else {
+        const created = await createTransportista(entityData);
+        setData([...data, created]);
+        showNotification('Transportista agregado correctamente');
+      }
+      clearForm();
+    } catch (error) {
+      console.error('Error al guardar transportista:', error);
+      const msg = error?.response?.data?.message || 'Error al guardar transportista';
+      showNotification(msg, 'error');
     }
-
-    clearForm();
   };
 
   const editEntity = (id) => {
     const entity = data.find(item => item.id === id);
     if (entity) {
-      setForm(entity);
+      // Modificado: Se quita costoServicio al popular el formulario para edición
+      setForm({
+        nombre: entity.nombre,
+        contacto: entity.contacto,
+        telefono: entity.telefono.toString(),
+        tipoVehiculos: (entity.tipoVehiculos || []).map(tv => tv.id.toString()),
+        zonasDeViaje: (entity.zonasDeViaje || []).map(zn => zn.id.toString())
+      });
       setEditingId(id);
     }
   };
 
-  const deleteEntity = (id) => {
-    if (window.confirm('¿Estás seguro de que quieres eliminar este transportista?')) {
-      setData(data.filter(item => item.id !== id));
-      showNotification('Transportista eliminado correctamente');
-    }
+  const deleteEntity = async (id) => {
+      const result = await Swal.fire({
+        title: '¿Estás seguro?',
+        text: 'Esta acción eliminará el transportista definitivamente.',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#d33',
+        cancelButtonColor: '#3085d6',
+        confirmButtonText: 'Sí, eliminar',
+        cancelButtonText: 'Cancelar'
+      });
+  
+      if (result.isConfirmed) {
+        try {
+          await deleteTransportista(id);
+          setData(data.filter(item => item.id !== id));
+          showNotification('Transportista eliminado correctamente');
+        } catch (error) {
+          console.error('Error al eliminar el transportista:', error);
+          const mensaje = error?.response?.data?.message || 'Error al eliminar transportista';
+          showNotification(mensaje, 'error');
+        }
+      }
   };
 
+  // Corregido: Lógica de filtrado para buscar en las listas de vehículos y zonas
   const filteredData = data.filter(item => {
     const searchLower = searchTerm.toLowerCase();
+    
+    const tieneVehiculo = item.tipoVehiculos?.some(vehiculo => 
+      vehiculo.descripcion.toLowerCase().includes(searchLower)
+    );
+
+    const cubreZona = item.zonasDeViaje?.some(zona => 
+      `${zona.origen} - ${zona.destino}`.toLowerCase().includes(searchLower)
+    );
+
     return (
       item.nombre.toLowerCase().includes(searchLower) ||
       item.contacto.toLowerCase().includes(searchLower) ||
-      (item.email && item.email.toLowerCase().includes(searchLower))
+      item.telefono.toString().includes(searchLower) ||
+      tieneVehiculo ||
+      cubreZona
     );
   });
 
+  const canSubmit = tiposVehiculo.length > 0 && zonasViaje.length > 0;
+
   return (
-    <div className="grid lg:grid-cols-3 gap-8">
+    <div className="grid lg:grid-cols-3 gap-8 ">
       {/* Form Section */}
       <div className="lg:col-span-1">
-        <div className="bg-white p-8 rounded-2xl shadow-lg border border-gray-100">
-          <h2 className={`text-2xl font-bold text-gray-800 mb-6 pb-3 border-b-4 border-${tabColor}-500`}>
+        <div className="bg-[#444240] p-8 rounded-2xl shadow-lg   border border-gray-900">
+          <h2 className={`text-2xl font-bold text-gray-300 mb-6 pb-3 border-b-4 border-orange-500`}>
             {editingId ? 'Editar Transportista' : 'Nuevo Transportista'}
           </h2>
 
           <div className="space-y-5">
             <div className="grid grid-cols-1 gap-4">
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Nombre de la Empresa *
+                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                  Nombre *
                 </label>
                 <input
                   type="text"
@@ -107,12 +196,12 @@ const Transportistas = ({ showNotification, tabColor }) => {
                   value={form.nombre}
                   onChange={handleInputChange}
                   placeholder="Nombre del transportista"
-                  className={`w-full p-3 border-2 border-gray-200 rounded-lg focus:border-${tabColor}-500 focus:outline-none transition-all`}
+                  className={`w-full p-3 border-2 border-gray-200 text-gray-300 rounded-lg focus:border-orange-500 focus:outline-none transition-all`}
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Persona de Contacto *
+                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                  Contacto *
                 </label>
                 <input
                   type="text"
@@ -120,47 +209,71 @@ const Transportistas = ({ showNotification, tabColor }) => {
                   value={form.contacto}
                   onChange={handleInputChange}
                   placeholder="Persona de contacto"
-                  className={`w-full p-3 border-2 border-gray-200 rounded-lg focus:border-${tabColor}-500 focus:outline-none transition-all`}
+                  className={`w-full p-3 border-2 border-gray-200 text-gray-300 rounded-lg focus:border-orange-500 focus:outline-none transition-all`}
                 />
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                <label className="block text-sm font-semibold text-gray-300 mb-2">
                   Teléfono *
                 </label>
                 <input
-                  type="tel"
+                  type="number"
                   name="telefono"
                   value={form.telefono}
                   onChange={handleInputChange}
                   placeholder="Número de teléfono"
-                  className={`w-full p-3 border-2 border-gray-200 rounded-lg focus:border-${tabColor}-500 focus:outline-none transition-all`}
+                  className={`w-full p-3 border-2 border-gray-200 text-gray-300 rounded-lg focus:border-orange-500 focus:outline-none transition-all`}
                 />
               </div>
+              
+              {/* Eliminado: Bloque del input para Costo de Servicio */}
+              
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Email
+                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                  Tipo de Vehículo *
                 </label>
-                <input
-                  type="email"
-                  name="email"
-                  value={form.email}
+                <select
+                  name="tipoVehiculos"
+                  value={form.tipoVehiculos}
                   onChange={handleInputChange}
-                  placeholder="Correo electrónico"
-                  className={`w-full p-3 border-2 border-gray-200 rounded-lg focus:border-${tabColor}-500 focus:outline-none transition-all`}
-                />
+                  multiple
+                  className={`w-full p-3 border-2 border-gray-200 text-gray-300 rounded-lg focus:border-orange-500 focus:outline-none transition-all h-32`}
+                >
+                  {tiposVehiculo.map(tipo => (
+                    <option key={tipo.id} value={tipo.id}>
+                      {tipo.descripcion}
+                    </option>
+                  ))}
+                </select>
+                {tiposVehiculo.length === 0 && (
+                  <p className="text-sm text-amber-600 mt-1">
+                    ⚠️ Primero debes crear tipos de vehículo en la pestaña correspondiente
+                  </p>
+                )}
               </div>
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  Dirección
+                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                  Zona de Viaje *
                 </label>
-                <textarea
-                  name="direccion"
-                  value={form.direccion}
-                  onChange={handleInputChange}
-                  placeholder="Dirección completa"
-                  rows="3"
-                  className={`w-full p-3 border-2 border-gray-200 rounded-lg focus:border-${tabColor}-500 focus:outline-none transition-all resize-none`}
-                />
+                <select
+                    name="zonasDeViaje"
+                    value={form.zonasDeViaje}
+                    onChange={handleInputChange}
+                    multiple
+                    className={`w-full p-3 border-2 border-gray-300 text-gray-300 rounded-lg focus:border-${tabColor}-500 focus:outline-none transition-all h-32`}
+                  >
+                    {zonasViaje.map(zona => (
+                      <option key={zona.id} value={zona.id}>
+                        {/* Modificado: Se quita el costo que ya no existe */}
+                        {`${zona.origen} - ${zona.destino}`}
+                      </option>
+                    ))}
+                </select>
+                {zonasViaje.length === 0 && (
+                  <p className="text-sm text-amber-600 mt-1">
+                    ⚠️ Primero debes crear zonas de viaje en la pestaña correspondiente
+                  </p>
+                )}
               </div>
             </div>
 
@@ -168,7 +281,7 @@ const Transportistas = ({ showNotification, tabColor }) => {
               <button
                 type="button"
                 onClick={clearForm}
-                className="px-6 py-3 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors font-semibold"
+                className="px-6 py-3 rounded-lg  bg-[#444240] hover:bg-yellow-500 text-yellow-400 hover:text-white border border-yellow-400 font-semibold transition duration-300"
               >
                 Limpiar
               </button>
@@ -176,17 +289,20 @@ const Transportistas = ({ showNotification, tabColor }) => {
                 <button
                   type="button"
                   onClick={clearForm}
-                  className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-semibold"
+                  className="px-6 py-3 bg-[#444240] text-red-600 border border-red-600 hover:text-white rounded-lg hover:bg-red-600 transition-colors font-semibold"
                 >
                   Cancelar
                 </button>
               )}
               <button
                 onClick={handleSubmit}
+                disabled={!canSubmit}
                 className={`px-6 py-3 text-white rounded-lg transition-colors font-semibold ${
-                  editingId
-                    ? `bg-${tabColor}-500 hover:bg-${tabColor}-600`
-                    : 'bg-green-500 hover:bg-green-600'
+                  !canSubmit 
+                    ? 'bg-gray-400 cursor-not-allowed'
+                    : editingId
+                      ? `bg-[#444240] hover:bg-orange-600 text-orange-600 hover:text-white border border-orange-600`
+                      : 'bg-[#444240] hover:bg-green-500 text-green-400 hover:text-white border border-green-400 font-semibold py-2 px-4 rounded-2xl transition duration-300'
                 }`}
               >
                 {editingId ? 'Actualizar' : 'Guardar'}
@@ -197,8 +313,8 @@ const Transportistas = ({ showNotification, tabColor }) => {
       </div>
 
       {/* Table Section */}
-      <div className="lg:col-span-2 bg-white rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
-        <div className={`bg-gradient-to-r from-${tabColor}-700 to-${tabColor}-800 text-white p-6`}>
+      <div className="lg:col-span-2 bg-[#444240] rounded-2xl shadow-lg border border-gray-100 overflow-hidden">
+        <div className={`bg-gradient-to-r from-orange-500 to-orange-600 text-white p-6`}>
           <h2 className="text-2xl font-bold mb-4">
             Transportistas Registrados
           </h2>
@@ -216,20 +332,20 @@ const Transportistas = ({ showNotification, tabColor }) => {
 
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full">
-            <thead className="bg-gray-50 sticky top-0">
+            <thead className="bg-[#242423] text-gray-300 sticky top-0">
               <tr>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Empresa</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Contacto</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Información</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">Acciones</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold ">Nombre</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold ">Contacto</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold ">Teléfono</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold ">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {filteredData.length === 0 ? (
                 <tr>
-                  <td colSpan="4" className="px-4 py-12 text-center text-gray-500">
+                  <td colSpan="4" className="px-4 py-12 text-center text-gray-300">
                     <div className="flex flex-col items-center">
-                      <div className="text-6xl mb-4">🏢</div>
+                      <div className="text-6xl mb-4">🚛</div>
                       <h3 className="text-lg font-semibold mb-2">No hay transportistas registrados</h3>
                       <p>Comienza agregando un nuevo transportista usando el formulario</p>
                     </div>
@@ -238,45 +354,34 @@ const Transportistas = ({ showNotification, tabColor }) => {
               ) : (
                 filteredData.map((item) => (
                   <tr key={item.id} className={`border-b border-gray-100 hover:bg-${tabColor}-50/50 transition-colors`}>
+                    <td className="px-4 py-3 text-sm font-medium text-neutral-200">{item.nombre}</td>
+                    <td className="px-4 py-3 text-sm text-neutral-200">{item.contacto}</td>
                     <td className="px-4 py-3">
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">{item.nombre}</div>
-                        {item.direccion && (
-                          <div className="flex items-center text-xs text-gray-500 mt-1">
-                            <MapPin size={12} className="mr-1" />
-                            {item.direccion}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-sm font-medium">{item.contacto}</td>
-                    <td className="px-4 py-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center text-sm text-gray-600">
+                        <div className="flex items-center text-sm text-neutral-200">
                           <Phone size={12} className="mr-2" />
                           {item.telefono}
                         </div>
-                        {item.email && (
-                          <div className="flex items-center text-sm text-gray-600">
-                            <Mail size={12} className="mr-2" />
-                            {item.email}
-                          </div>
-                        )}
-                      </div>
+                        {/* Eliminado: Div que mostraba el costo de servicio */}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
                         <button
                           onClick={() => editEntity(item.id)}
-                          className={`p-2 bg-${tabColor}-500 text-white rounded-lg hover:bg-${tabColor}-600 transition-colors`}
+                          className={`p-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors`}
                         >
                           <Edit size={14} />
                         </button>
                         <button
                           onClick={() => deleteEntity(item.id)}
-                          className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
+                          className="p-2 bg-red-700 text-white rounded-lg hover:bg-red-800 transition-colors"
                         >
                           <Trash2 size={14} />
+                        </button>
+                        <button
+                          onClick={() => viewEntity(item)}
+                          className="p-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 transition-colors"
+                          >
+                          <Eye size={14} />
                         </button>
                       </div>
                     </td>
@@ -287,6 +392,46 @@ const Transportistas = ({ showNotification, tabColor }) => {
           </table>
         </div>
       </div>
+      {showModal && selectedTransportista && (
+        <div className="fixed inset-0 z-50 backdrop-blur-sm bg-black/20 flex justify-center items-center">
+          <div className="bg-[#333] p-6 rounded-xl max-w-md w-full shadow-lg text-gray-100">
+            <h2 className="text-2xl font-bold mb-4">Detalle del Transportista</h2>
+            <div className="space-y-2 text-sm">
+              <p><strong>Nombre:</strong> {selectedTransportista.nombre}</p>
+              <p><strong>Contacto:</strong> {selectedTransportista.contacto}</p>
+              <p><strong>Teléfono:</strong> {selectedTransportista.telefono}</p>
+              {/* Eliminado: Párrafo que mostraba el Costo Servicio */}
+              <div>
+                <strong>Tipos de Vehículo:</strong>
+                <ul className="list-disc list-inside">
+                  {selectedTransportista.tipoVehiculos?.map(tv => (
+                    <li key={tv.id}>{tv.descripcion}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <strong>Zonas de Viaje:</strong>
+                <ul className="list-disc list-inside">
+                  {selectedTransportista.zonasDeViaje?.map(z => (
+                    <li key={z.id}>
+                      {/* Modificado: Se quita el costo que ya no existe */}
+                      {`${z.origen} - ${z.destino}`}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end">
+              <button
+                onClick={() => setShowModal(false)}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
