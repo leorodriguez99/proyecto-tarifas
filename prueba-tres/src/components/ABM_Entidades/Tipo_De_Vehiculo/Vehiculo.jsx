@@ -1,44 +1,112 @@
-import React, { useEffect, useState } from 'react';
-import { Search, Edit, Trash2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Edit, Trash2 } from 'lucide-react';
 import { createVehiculo, deleteVehiculo, getVehiculos, updateVehiculo } from '../../../services/tipoVehiculo.service';
 import Swal from 'sweetalert2';
 import { getCargas } from '../../../services/tipoCarga.service';
+import Select from 'react-select';
+import { useOutletContext } from 'react-router-dom';
 
-const TiposVehiculo = ({ showNotification, tabColor }) => {
-  const [data, setData] = useState([]);
+
+const customSelectStyles = (isMulti = false) => ({
+  control: (base) => ({
+    ...base,
+    backgroundColor: isMulti ? '#444240' : 'rgba(255,255,255,0.1)',
+    borderColor: isMulti ? 'rgb(107 114 128)' : 'rgba(255,255,255,0.3)',
+    color: 'white',
+    width: '100%',           
+    minWidth: '200px',  
+    fontSize: '0.875rem'
+  }),
+  singleValue: (base) => ({ ...base, color: 'white' }),
+  multiValue: (base) => ({ ...base, backgroundColor: 'rgba(255,255,255,0.2)' }),
+  multiValueLabel: (base) => ({ ...base, color: 'white' }),
+  menu: (base) => ({ 
+    ...base, 
+    backgroundColor: '#242423', 
+    color: 'white',
+    maxHeight: '200px',
+    zIndex: 9999
+  }),
+  menuList: (base) => ({
+    ...base,
+    maxHeight: '200px', 
+    overflowY: 'auto', 
+    
+    '&::-webkit-scrollbar': {
+      width: '8px',
+    },
+    '&::-webkit-scrollbar-track': {
+      backgroundColor: '#1f1f1f',
+      borderRadius: '4px',
+    },
+    '&::-webkit-scrollbar-thumb': {
+      backgroundColor: '#555',
+      borderRadius: '4px',
+      '&:hover': {
+        backgroundColor: '#777',
+      },
+    },
+  }),
+  option: (base, state) => ({
+    ...base,
+    backgroundColor: state.isFocused ? 'rgba(255,255,255,0.2)' : '#242423',
+    color: 'white',
+  }),
+  placeholder: (base) => ({ ...base, color: 'rgba(255,255,255,0.7)' }),
+});
+
+const TiposVehiculo = () => {
+  const { showNotification, tabColor } = useOutletContext();
+  // --- ESTADOS ---
+  const [data, setData] = useState([]); 
+  const [filteredData, setFilteredData] = useState([]); 
   const [editingId, setEditingId] = useState(null);
-  const [searchTerm, setSearchTerm] = useState('');
-  // Modificado: Se quita precioBase del estado inicial del formulario
+  
+  // Estado para el formulario de creación/edición
   const [form, setForm] = useState({ descripcion: '', tipoCargaIds: [] });
+  
+  // Estado separado para los filtros de la tabla
+  const [filters, setFilters] = useState({ descripcion: '', tipoCarga: '' });
+
   const [tiposCarga, setTiposCarga] = useState([]);
 
+  // Carga inicial de datos
   useEffect(() => {
-    const fetchTiposCarga = async () => {
+    const fetchInitialData = async () => {
       try {
-        const cargas = await getCargas();
-        setTiposCarga(cargas);
+        const [vehiculosData, cargasData] = await Promise.all([
+          getVehiculos(),
+          getCargas()
+        ]);
+        setData(vehiculosData);
+        setFilteredData(vehiculosData); 
+        setTiposCarga(cargasData);
       } catch (error) {
-        showNotification('Error al cargar los tipos de carga', 'error');
+        showNotification('Error al cargar datos iniciales', 'error');
       }
     };
-    fetchTiposCarga();
+    fetchInitialData();
   }, []);
 
+  
   useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const vehiculos = await getVehiculos();
-        setData(vehiculos);
-      } catch (error) {
-        console.error('Error al cargar tipos de vehículo', error);
-        showNotification('Error al cargar tipos de vehículo', 'error');
-      }
-    };
-    fetchData();
-  }, []);
+    let dataToFilter = [...data];
 
+    if (filters.descripcion) {
+      dataToFilter = dataToFilter.filter(item => 
+        item.descripcion.toLowerCase().includes(filters.descripcion.toLowerCase())
+      );
+    }
+    if (filters.tipoCarga) {
+      dataToFilter = dataToFilter.filter(item =>
+        item.tipoCargas?.some(tc => tc.categoria.toLowerCase().includes(filters.tipoCarga.toLowerCase()))
+      );
+    }
+    setFilteredData(dataToFilter);
+  }, [data, filters]);
+
+  // --- MANEJADORES DE FORMULARIO ---
   const clearForm = () => {
-    // Modificado: Se quita precioBase al limpiar el formulario
     setForm({ descripcion: '', tipoCargaIds: [] });
     setEditingId(null);
   };
@@ -48,42 +116,37 @@ const TiposVehiculo = ({ showNotification, tabColor }) => {
     setForm({ ...form, [name]: value });
   };
 
-  const handleTipoCargaChange = (e) => {
-    const selected = Array.from(e.target.selectedOptions, option => parseInt(option.value));
-    setForm({ ...form, tipoCargaIds: selected });
-    console.log("Tipo de carga seleccionados:", selected);
+  const handleFormTipoCargaChange = (selectedOptions) => {
+    const selectedIds = selectedOptions ? selectedOptions.map(option => option.id) : [];
+    setForm({ ...form, tipoCargaIds: selectedIds });
   };
 
-  // Modificado: Se quita la validación de precioBase
-  const validateForm = () => {
-    return form.descripcion && form.tipoCargaIds.length > 0;
-  };
+  // --- LÓGICA DE CRUD ---
+  const validateForm = () => form.descripcion && form.tipoCargaIds.length > 0;
 
   const handleSubmit = async () => {
     if (!validateForm()) {
       showNotification('Por favor completa todos los campos requeridos', 'error');
       return;
     }
-
-    // Modificado: Se quita precioBase de los datos a enviar
     const entityData = {
       descripcion: form.descripcion.trim(),
-      tipoCargas: form.tipoCargaIds.map(id => parseInt(id))
+      tipoCargas: form.tipoCargaIds,
     };
-
     try {
+      let updatedData;
       if (editingId) {
         const updated = await updateVehiculo(editingId, entityData);
-        setData(data.map(item => item.id === editingId ? updated : item));
+        updatedData = data.map(item => (item.id === editingId ? updated : item));
         showNotification('Tipo de vehículo actualizado correctamente');
       } else {
         const creado = await createVehiculo(entityData);
-        setData([...data, creado]);
+        updatedData = [...data, creado];
         showNotification('Tipo de vehículo agregado correctamente');
       }
+      setData(updatedData);
       clearForm();
     } catch (error) {
-      console.error('Error al guardar tipo de vehículo', error);
       const msg = error?.response?.data?.message || 'Error al guardar tipo de vehículo';
       showNotification(msg, 'error');
     }
@@ -92,15 +155,14 @@ const TiposVehiculo = ({ showNotification, tabColor }) => {
   const editEntity = (id) => {
     const entity = data.find(item => item.id === id);
     if (entity) {
-      // Modificado: Se quita precioBase al popular el formulario para edición
       setForm({
         descripcion: entity.descripcion,
-        tipoCargaIds: (entity.tipoCargas || []).map(tc => tc.id.toString())
+        tipoCargaIds: (entity.tipoCargas || []).map(tc => tc.id)
       });
       setEditingId(id);
     }
   };
-
+  
   const deleteEntity = async (id) => {
     const result = await Swal.fire({
       title: '¿Estás seguro?',
@@ -112,87 +174,105 @@ const TiposVehiculo = ({ showNotification, tabColor }) => {
       confirmButtonText: 'Sí, eliminar',
       cancelButtonText: 'Cancelar'
     });
-
     if (result.isConfirmed) {
       try {
         await deleteVehiculo(id);
-        setData(data.filter(item => item.id !== id));
+        const newData = data.filter(item => item.id !== id);
+        setData(newData);
         showNotification('Tipo de vehículo eliminado correctamente');
       } catch (error) {
-        console.error('Error al eliminar tipo de vehículo:', error);
         const mensaje = error?.response?.data?.message || 'Error al eliminar el tipo de vehículo';
         showNotification(mensaje, 'error');
       }
     }
   };
-
+  
   const getTipoCargaNombre = (tipoCargaArr) => {
-    if (Array.isArray(tipoCargaArr) && tipoCargaArr.length > 0) {
-      return tipoCargaArr.map(tc => tc.categoria).join(', ');
-    }
-    return 'No especificado';
+    if (!tipoCargaArr || tipoCargaArr.length === 0) return 'No especificado';
+    return tipoCargaArr.map(tc => tc.categoria).join(', ');
   };
 
-  const filteredData = data.filter(item => {
-    const searchLower = searchTerm.toLowerCase();
-    const tipoCargaNombre = getTipoCargaNombre(item.tipoCargas);
-    return (
-      item.descripcion.toLowerCase().includes(searchLower) ||
-      tipoCargaNombre.toLowerCase().includes(searchLower)
-    );
-  });
+  // Opciones para los Select de los filtros
+  const opcionesVehiculoFilter = useMemo(() => [
+    { value: '', label: 'Todos los Vehículos' },
+    ...[...new Set(data.map(item => item.descripcion))].map(desc => ({ value: desc, label: desc }))
+  ], [data]);
+
+  const opcionesCargaFilter = useMemo(() => [
+    { value: '', label: 'Todos los Tipos de Carga' },
+    ...[...new Set(tiposCarga.map(item => item.categoria))].map(cat => ({ value: cat, label: cat }))
+  ], [tiposCarga]);
 
   return (
     <div className="grid lg:grid-cols-3 gap-8 bg-[#242423]">
+      <style jsx>{`
+        /* Estilos personalizados para la barra de scroll */
+        .custom-scrollbar::-webkit-scrollbar {
+          width: 8px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-track {
+          background: #2d2d2d;
+          border-radius: 4px;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+          background: #4a5568;
+          border-radius: 4px;
+          border: 1px solid #2d2d2d;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+          background: #6b7280;
+        }
+        
+        .custom-scrollbar::-webkit-scrollbar-thumb:active {
+          background: #9ca3af;
+        }
+
+        /* Para Firefox */
+        .custom-scrollbar {
+          scrollbar-width: thin;
+          scrollbar-color: #4a5568 #2d2d2d;
+        }
+      `}</style>
+
       {/* Formulario */}
       <div className="lg:col-span-1">
         <div className="bg-[#444240] p-8 rounded-2xl shadow-xl border border-gray-900">
           <h2 className={`text-2xl font-bold text-gray-300 mb-6 pb-3 border-b-4 border-${tabColor}-500`}>
             {editingId ? 'Editar Tipo de Vehículo' : 'Nuevo Tipo de Vehículo'}
           </h2>
-
           <div className="space-y-5">
-            <div className="grid grid-cols-1 gap-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-300 mb-2">Descripción *</label>
-                <textarea
-                  name="descripcion"
-                  value={form.descripcion}
-                  onChange={handleInputChange}
-                  placeholder="Descripción del tipo de vehículo"
-                  rows="3"
-                  className={`w-full p-3 border-2 text-gray-300 border-gray-200 rounded-lg focus:border-green-500 focus:outline-none transition-all resize-none`}
-                />
-              </div>
-              {/* Eliminado: Bloque del input para Precio Base */}
-              <div>
-                <label className="block text-sm font-semibold text-gray-300 mb-2">Tipo de Carga *</label>
-                <select
-                  multiple
-                  name="tipoCargaIds"
-                  value={form.tipoCargaIds}
-                  onChange={handleTipoCargaChange}
-                  className={`w-full p-3 border-2 border-gray-200 rounded-lg text-gray-300 focus:border-${tabColor}-500 focus:outline-none transition-all`}
-                >
-                  {tiposCarga.map(tipo => (
-                    <option key={tipo.id} value={tipo.id}>
-                      {tipo.categoria}
-                    </option>
-                  ))}
-                </select>
-                {tiposCarga.length === 0 && (
-                  <p className="text-sm text-amber-600 mt-1">
-                    ⚠️ Primero debes crear tipos de carga en la pestaña correspondiente
-                  </p>
-                )}
-              </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-300 mb-2">Descripción *</label>
+              <textarea
+                name="descripcion"
+                value={form.descripcion}
+                onChange={handleInputChange}
+                placeholder="Descripción del tipo de vehículo"
+                rows="3"
+                className={`w-full p-3 border-2 text-gray-300 bg-transparent border-gray-600 rounded-lg focus:border-green-500 focus:outline-none transition-all resize-none`}
+              />
             </div>
-
-            <div className="flex gap-4 pt-6 border-t border-gray-200">
+            <div>
+              <label className="block text-sm font-semibold text-gray-300 mb-2">Tipos de Carga *</label>
+              <Select
+                isMulti
+                options={tiposCarga}
+                getOptionLabel={(e) => e.categoria}
+                getOptionValue={(e) => e.id}
+                value={tiposCarga.filter(tc => form.tipoCargaIds.includes(tc.id))}
+                onChange={handleFormTipoCargaChange}
+                placeholder="Seleccionar..."
+                styles={customSelectStyles(true)}
+              />
+            </div>
+            <div className="flex flex-wrap gap-4 pt-6 border-t border-gray-200 w-full">
               <button
                 type="button"
                 onClick={clearForm}
-                className="px-6 py-3 bg-[#444240] text-yellow-500 border border-yellow-500 hover:text-white rounded-lg hover:bg-yellow-500 transition-colors font-semibold"
+                className="px-6 py-3 bg-yellow-500 text-white rounded-lg hover:bg-yellow-600 transition-colors font-semibold"
               >
                 Limpiar
               </button>
@@ -200,21 +280,17 @@ const TiposVehiculo = ({ showNotification, tabColor }) => {
                 <button
                   type="button"
                   onClick={clearForm}
-                  className="px-6 py-3 bg-[#444240] text-red-500 rounded-lg border border-red-500 hover:text-white hover:bg-red-500 transition-colors font-semibold"
+                  className="px-6 py-3 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors font-semibold"
                 >
                   Cancelar
                 </button>
               )}
               <button
                 onClick={handleSubmit}
-                disabled={tiposCarga.length === 0}
-                className={`px-6 py-3 text-white rounded-lg transition-colors font-semibold ${
-                  tiposCarga.length === 0
-                    ? 'bg-gray-400 cursor-not-allowed'
-                    : editingId
-                    ? `bg-[#444240] text-green-500 border border-green-500 hover:text-white hover:bg-green-500`
-                    : 'bg-[#444240] border border-green-500 text-green-500 hover:text-white hover:bg-green-500'
-                }`}
+                className={`px-6 py-3 text-white rounded-lg transition-colors font-semibold ${editingId
+                  ? `bg-indigo-500 hover:bg-indigo-600`
+                  : 'bg-green-500 hover:bg-green-600'
+                  }`}
               >
                 {editingId ? 'Actualizar' : 'Guardar'}
               </button>
@@ -227,67 +303,69 @@ const TiposVehiculo = ({ showNotification, tabColor }) => {
       <div className="lg:col-span-2 bg-[#444240] rounded-2xl shadow-lg border border-gray-900 overflow-hidden">
         <div className={`bg-gradient-to-r from-green-700 to-green-800 text-white p-6`}>
           <h2 className="text-2xl font-bold mb-4">Tipos de Vehículo Registrados</h2>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-300" size={20} />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar tipos de vehículo..."
-              className="w-full max-w-xs pl-10 pr-4 py-2 bg-white/10 border border-white/30 rounded-lg text-white placeholder-gray-300 focus:outline-none focus:bg-white/20"
+          <div className='flex gap-4 items-center'>
+            <Select
+              options={opcionesVehiculoFilter}
+              isClearable
+              placeholder="Filtrar por vehículo..."
+              onChange={(selected) => setFilters(prev => ({ ...prev, descripcion: selected ? selected.value : '' }))}
+              styles={customSelectStyles()}
+            />
+            <Select
+              options={opcionesCargaFilter}
+              isClearable
+              placeholder="Filtrar por tipo de carga..."
+              onChange={(selected) => setFilters(prev => ({ ...prev, tipoCarga: selected ? selected.value : '' }))}
+              styles={customSelectStyles()}
             />
           </div>
         </div>
-
-        <div className="max-h-96 overflow-y-auto bg-[#444240]">
-          <table className="w-full">
-            <thead className="bg-[#242423] sticky top-0">
-              <tr className='text-gray-300'>
-                <th className="px-4 py-3 text-left text-sm font-semibold ">Descripción</th>
-                {/* Eliminado: Cabecera de la tabla para Precio Base */}
-                <th className="px-4 py-3 text-left text-sm font-semibold ">Tipo de Carga</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold ">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.length === 0 ? (
-                <tr>
-                  {/* Modificado: colSpan cambia de 4 a 3 */}
-                  <td colSpan="3" className="px-4 py-12 text-center text-gray-300">
-                    <div className="flex flex-col items-center">
-                      <div className="text-6xl mb-4">🚛</div>
-                      <h3 className="text-lg font-semibold mb-2">No hay tipos de vehículo registrados</h3>
-                      <p>Comienza agregando un nuevo tipo de vehículo usando el formulario</p>
-                    </div>
-                  </td>
+      
+        <div className="relative">
+          <div className="max-h-96 overflow-y-auto custom-scrollbar">
+            <table className="w-full">
+              <thead className="bg-[#242423] sticky top-0 z-10">
+                <tr className='text-gray-300'>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Descripción</th>
+                  <th className="px-4 py-3 text-left text-sm font-semibold">Tipos de Carga Compatibles</th>
+                  <th className="px-4 py-3 text-center text-sm font-semibold">Acciones</th>
                 </tr>
-              ) : (
-                filteredData.map((item) => (
-                  <tr key={item.id} className={`border-b border-gray-100 hover:bg-${tabColor}-50/50 transition-colors`}>
-                    <td className="px-4 py-3 text-sm text-neutral-200">{item.descripcion}</td>
-                    {/* Eliminado: Celda de la tabla para mostrar el precioBase */}
-                    <td className="px-4 py-3 text-sm text-neutral-200">{getTipoCargaNombre(item.tipoCargas)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => editEntity(item.id)}
-                          className={`p-2 bg-green-700 text-white rounded-lg hover:bg-green-800 transition-colors`}
-                        >
-                          <Edit size={14} />
-                        </button>
-                        <button
-                          onClick={() => deleteEntity(item.id)}
-                          className="p-2 bg-red-700 text-white rounded-lg hover:bg-red-800 transition-colors"
-                        >
-                          <Trash2 size={14} />
-                        </button>
+              </thead>
+              <tbody>
+                {filteredData.length > 0 ? (
+                  filteredData.map((item) => (
+                    <tr key={item.id} className="border-b border-gray-700 hover:bg-gray-600 transition-colors">
+                      <td className="px-4 py-3 text-sm text-neutral-200">{item.descripcion}</td>
+                      <td className="px-4 py-3 text-sm text-neutral-200">{getTipoCargaNombre(item.tipoCargas)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex gap-2 justify-center">
+                          <button onClick={() => editEntity(item.id)} className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"><Edit size={14} /></button>
+                          <button onClick={() => deleteEntity(item.id)} className="p-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan="3" className="px-4 py-12 text-center text-gray-400">
+                      <div className="flex flex-col items-center">
+                        <div className="text-6xl mb-4">🚛</div>
+                        <h3 className="text-lg font-semibold mb-2 text-gray-300">No se encontraron vehículos</h3>
+                        <p>Intenta ajustar los filtros o agrega un nuevo tipo de vehículo.</p>
                       </div>
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                )}
+              </tbody>
+            </table>
+          </div>
+          
+          {filteredData.length > 8 && (
+            <div className="absolute bottom-2 right-2 bg-gray-800 text-gray-300 px-3 py-1 rounded-full text-xs flex items-center gap-1">
+              <span>↕</span>
+              <span>{filteredData.length} registros</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
